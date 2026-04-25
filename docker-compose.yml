@@ -1,0 +1,35 @@
+services:
+  ai-service:
+    build:
+      context: ./apps/ai-service
+      dockerfile: Dockerfile
+    env_file:
+      - ./apps/ai-service/.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ai_data:/app/.data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    env_file:
+      - ./apps/web/.env.local
+    environment:
+      - AI_SERVICE_URL=http://ai-service:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      ai-service:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ai_data:
