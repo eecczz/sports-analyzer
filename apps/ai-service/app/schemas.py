@@ -8,6 +8,8 @@ class AnalyzeRequest(BaseModel):
     start_sec: float = Field(..., ge=0)
     end_sec: float = Field(..., ge=0)
     question: str = Field(..., min_length=1, max_length=500)
+    video_title: str | None = Field(default=None, max_length=300)
+    channel_title: str | None = Field(default=None, max_length=200)
 
     def duration(self) -> float:
         return max(0.0, self.end_sec - self.start_sec)

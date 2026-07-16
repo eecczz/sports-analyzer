@@ -1,6 +1,13 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { formatDuration, formatViews } from "@/lib/format";
 import type { VideoSummary } from "@/lib/youtube";
 
@@ -46,6 +53,8 @@ type ChatMessage = {
 type Stage = {
   stage: string;
   message?: string;
+  trace_id?: string;
+  bytes?: number;
 };
 
 const rates = [0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -61,7 +70,8 @@ function parseSseChunk(buffer: string): {
   rest: string;
 } {
   const events: Array<{ event: string; data: string }> = [];
-  const parts = buffer.split("\n\n");
+  const normalized = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const parts = normalized.split("\n\n");
   const rest = parts.pop() ?? "";
   for (const part of parts) {
     let event = "message";
@@ -85,6 +95,99 @@ function clipEndLimit(start: number, total: number): number {
 
 function clipStartLimit(end: number): number {
   return Math.max(0, end - MAX_CLIP_SECONDS);
+}
+
+function renderInline(text: string): ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return (
+        <strong key={index} className="font-semibold text-zinc-50">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    return <span key={index}>{part}</span>;
+  });
+}
+
+function AssistantText({ text }: { text: string }) {
+  const lines = text.split(/\r?\n/).map((line) => line.trimEnd());
+  const blocks: ReactNode[] = [];
+  let bullets: string[] = [];
+
+  const flushBullets = () => {
+    if (!bullets.length) return;
+    blocks.push(
+      <ul key={`ul-${blocks.length}`} className="my-2 space-y-1.5">
+        {bullets.map((item, index) => (
+          <li key={`${item}-${index}`} className="flex gap-2 leading-relaxed">
+            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-orange-400" />
+            <span>{renderInline(item)}</span>
+          </li>
+        ))}
+      </ul>
+    );
+    bullets = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushBullets();
+      continue;
+    }
+
+    const bullet = line.match(/^[*-]\s+(.+)$/);
+    if (bullet) {
+      bullets.push(bullet[1]);
+      continue;
+    }
+
+    flushBullets();
+
+    const markdownHeading = line.match(/^#{1,3}\s+(.+)$/);
+    if (markdownHeading) {
+      blocks.push(
+        <h3
+          key={`heading-${blocks.length}`}
+          className="mt-4 text-base font-bold text-orange-100 first:mt-0"
+        >
+          {renderInline(markdownHeading[1])}
+        </h3>
+      );
+      continue;
+    }
+
+    const heading = line.match(/^\*\*(.+?)\*\*:?\s*(.*)$/);
+    if (heading) {
+      blocks.push(
+        <div key={`section-${blocks.length}`} className="mt-3 first:mt-0">
+          <div className="flex items-center gap-2 text-sm font-bold text-orange-200">
+            <span className="grid h-5 w-5 place-items-center rounded-full bg-orange-500/15 text-[10px] text-orange-200">
+              i
+            </span>
+            {heading[1]}
+          </div>
+          {heading[2] ? (
+            <p className="mt-1 leading-relaxed text-zinc-200">
+              {renderInline(heading[2])}
+            </p>
+          ) : null}
+        </div>
+      );
+      continue;
+    }
+
+    blocks.push(
+      <p key={`p-${blocks.length}`} className="my-2 leading-relaxed text-zinc-200">
+        {renderInline(line)}
+      </p>
+    );
+  }
+
+  flushBullets();
+
+  return <div className="space-y-2">{blocks}</div>;
 }
 
 export function WatchExperience({
@@ -310,6 +413,8 @@ export function WatchExperience({
           start_sec: clipStart,
           end_sec: clipEnd,
           question: trimmed,
+          video_title: video?.title,
+          channel_title: video?.channelTitle,
         }),
       });
 
@@ -322,13 +427,8 @@ export function WatchExperience({
       const decoder = new TextDecoder();
       let buffer = "";
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parsed = parseSseChunk(buffer);
-        buffer = parsed.rest;
-        for (const item of parsed.events) {
+      const handleEvents = (events: Array<{ event: string; data: string }>) => {
+        for (const item of events) {
           const data = item.data ? JSON.parse(item.data) : {};
           if (item.event === "stage") setStage(data);
           if (item.event === "token") {
@@ -347,6 +447,21 @@ export function WatchExperience({
           }
           if (item.event === "done") setStage({ stage: "done" });
         }
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parsed = parseSseChunk(buffer);
+        buffer = parsed.rest;
+        handleEvents(parsed.events);
+      }
+
+      buffer += decoder.decode();
+      if (buffer.trim()) {
+        const parsed = parseSseChunk(`${buffer}\n\n`);
+        handleEvents(parsed.events);
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -573,7 +688,17 @@ export function WatchExperience({
                     : "rounded border border-zinc-800 bg-black px-3 py-2 text-xs text-zinc-400"
               }
             >
-              {message.text || "Waiting for analysis..."}
+              {message.text ? (
+                message.role === "assistant" ? (
+                  <AssistantText text={message.text} />
+                ) : (
+                  <div className="whitespace-pre-wrap leading-relaxed">
+                    {message.text}
+                  </div>
+                )
+              ) : (
+                "Waiting for analysis..."
+              )}
             </div>
           ))}
         </div>
@@ -586,7 +711,11 @@ export function WatchExperience({
           ) : null}
           {clipMode ? (
             <div className="mb-2 text-xs text-zinc-500">
-              Selected clip must stay below 15 seconds.
+              Current range:{" "}
+              <span className="text-zinc-300">
+                {formatDuration(clipStart)} - {formatDuration(clipEnd)}
+              </span>
+              {" · "}Selected clip must stay below 15 seconds.
             </div>
           ) : null}
           <textarea
