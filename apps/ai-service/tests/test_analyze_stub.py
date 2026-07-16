@@ -52,6 +52,21 @@ def test_analyze_rejects_too_long_clip():
     assert "too long" in res.json()["detail"]
 
 
+def test_analyze_rejects_15_second_clip():
+    client = TestClient(app)
+    res = client.post(
+        "/analyze",
+        json={
+            "video_id": "abc",
+            "start_sec": 0,
+            "end_sec": 15,
+            "question": "test",
+        },
+    )
+    assert res.status_code == 400
+    assert "too long" in res.json()["detail"]
+
+
 def test_analyze_stub_streams_sse():
     client = TestClient(app)
     with client.stream(

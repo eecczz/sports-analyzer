@@ -14,13 +14,15 @@ class Settings(BaseSettings):
     ai_provider: Literal["gemini", "kimi"] = Field(default="gemini")
     gemini_api_key: str | None = None
     moonshot_api_key: str | None = None
+    gemini_model: str = Field(default="gemini-2.5-flash")
+    kimi_model: str = Field(default="kimi-k2.6")
     db_url: str = Field(default="sqlite+aiosqlite:///.data/ai.db")
     log_level: str = Field(default="INFO")
 
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
 
-    clip_max_seconds: int = Field(default=60)
-    clip_min_seconds: int = Field(default=1)
+    clip_max_seconds: float = Field(default=14.9)
+    clip_min_seconds: float = Field(default=1)
     analyze_first_token_timeout_sec: int = Field(default=30)
 
 

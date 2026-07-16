@@ -14,7 +14,6 @@ npm-debug.log*
 *.pid
 
 # Never commit secrets at any level
-**/.env
-**/.env.local
+**/.env*
 !**/.env.example
-!**/.env.local.example
+!**/.env*.example
